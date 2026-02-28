@@ -1,10 +1,24 @@
 import os
+import sys
 
-NOTION_API_KEY = os.environ["NOTION_API_KEY"]
-NOTION_PAGE_ID = os.environ["NOTION_PAGE_ID"]
-RECIPIENT_EMAIL = os.environ.get("RECIPIENT_EMAIL", "Michael.redding@gov.ca.gov")
-GMAIL_USER = os.environ["GMAIL_USER"]
-GMAIL_APP_PASSWORD = os.environ["GMAIL_APP_PASSWORD"]
+def _require(name, hint=""):
+    val = os.environ.get(name)
+    if not val:
+        print(f"\n❌  Missing required secret: {name}", flush=True)
+        if hint:
+            print(f"   {hint}", flush=True)
+        print("   Go to: GitHub repo → Settings → Secrets and variables → Actions\n", flush=True)
+        sys.exit(1)
+    return val
+
+NOTION_API_KEY    = _require("NOTION_API_KEY",    "Value: ntn_O18231483744Hl6Qv4mD7HPk3UrBFFKkrKUoLRTnMWz9Gv")
+NOTION_PAGE_ID    = _require("NOTION_PAGE_ID",    "Value: 2fb06cab0956801b8269d2e17da45d70")
+GMAIL_USER        = _require("GMAIL_USER",        "Value: Michael.w.redding@gmail.com")
+GMAIL_APP_PASSWORD = _require("GMAIL_APP_PASSWORD", "Your Gmail App Password (16 chars)")
+RECIPIENT_EMAIL   = os.environ.get("RECIPIENT_EMAIL", "Michael.redding@gov.ca.gov")
+
+# ANTHROPIC_API_KEY is optional — falls back to raw digest if absent
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
 DATABASE_NAME = "2026 Leg"
 SESSION_YEAR = "20252026"
