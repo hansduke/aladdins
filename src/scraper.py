@@ -163,7 +163,16 @@ class LegInfoScraper:
             try:
                 resp = self._get(url)
                 parser = getattr(self, f"_parse_{page_type}_page")
-                details.update(parser(resp.text))
+                # Pass bill metadata to text parser so Claude can write a better summary
+                if page_type == "text":
+                    parsed = parser(
+                        resp.text,
+                        bill_number=details.get("bill_number", ""),
+                        title=details.get("title", ""),
+                    )
+                else:
+                    parsed = parser(resp.text)
+                details.update(parsed)
                 details[f"{page_type}_url"] = url
                 time.sleep(0.75)
             except Exception as exc:
@@ -188,12 +197,14 @@ class LegInfoScraper:
 
         return data
 
-    def _parse_text_page(self, html):
+    def _parse_text_page(self, html, bill_number="", title=""):
+        from .summarizer import summarize_bill
+
         soup = BeautifulSoup(html, "lxml")
         data = {}
         text = soup.get_text(separator="\n", strip=True)
 
-        # Extract Legislative Counsel's Digest — the built-in summary
+        # Extract Legislative Counsel's Digest
         digest_m = re.search(
             r"LEGISLATIVE COUNSEL'S DIGEST\s*\n(.*?)(?:The people of the State|AN ACT|SECTION 1\.|\Z)",
             text,
@@ -201,8 +212,9 @@ class LegInfoScraper:
         )
         if digest_m:
             digest = re.sub(r"\s+", " ", digest_m.group(1)).strip()
-            sentences = re.split(r"(?<=[.!?])\s+(?=[A-Z])", digest)
-            data["summary"] = " ".join(sentences[:2])[:500]
+            # Use Claude to produce a policy-focused 2-sentence summary
+            data["summary"] = summarize_bill(bill_number, title, digest)
+            data["raw_digest"] = digest[:1000]
 
         # Link to current enrolled/chaptered/amended text (PDF or HTML)
         version_links = soup.find_all("a", href=re.compile(r"\.(pdf|html?)$", re.I))
