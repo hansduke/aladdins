@@ -1,5 +1,5 @@
 name: Initial Notion Database Setup
-
+ 
 on:
   # Run manually from the Actions tab — only needed once
   workflow_dispatch:
