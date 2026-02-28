@@ -1,0 +1,50 @@
+name: Weekly Legislation Update
+
+on:
+  # Every Wednesday at 6:00 AM Pacific Time
+  # PST = UTC-8  → 14:00 UTC (Nov–Mar)
+  # PDT = UTC-7  → 13:00 UTC (Mar–Nov)
+  # Using 14:00 UTC covers 6 AM PST; shifts to 7 AM in summer — acceptable.
+  schedule:
+    - cron: "0 14 * * 3"
+
+  # Allow manual trigger from the GitHub Actions UI
+  workflow_dispatch:
+    inputs:
+      skip_email:
+        description: "Skip sending the email (scrape + sync only)"
+        required: false
+        default: "false"
+
+jobs:
+  update:
+    name: Scrape · Sync · Email
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run update
+        env:
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          NOTION_PAGE_ID: ${{ secrets.NOTION_PAGE_ID }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
+        run: |
+          if [ "${{ github.event.inputs.skip_email }}" = "true" ]; then
+            python main.py --no-email
+          else
+            python main.py
+          fi

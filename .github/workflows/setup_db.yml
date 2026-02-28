@@ -1,0 +1,33 @@
+name: Initial Notion Database Setup
+
+on:
+  # Run manually from the Actions tab — only needed once
+  workflow_dispatch:
+
+jobs:
+  setup:
+    name: Create Notion Database
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Create Notion database
+        env:
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          NOTION_PAGE_ID: ${{ secrets.NOTION_PAGE_ID }}
+          # Dummy values — not used by --setup mode
+          GMAIL_USER: "setup@example.com"
+          GMAIL_APP_PASSWORD: "dummy"
+        run: python main.py --setup
