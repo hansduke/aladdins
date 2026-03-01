@@ -78,58 +78,82 @@ class NotionSync:
 
     def get_or_create_database(self):
         """Find the existing '2026 Leg' database or create it fresh."""
-        results = self.client.search(
-            query=DATABASE_NAME,
-            filter={"property": "object", "value": "database"},
-        )
+        # Format page ID as UUID with dashes (Notion API requires this)
+        raw = NOTION_PAGE_ID.replace("-", "")
+        page_id = f"{raw[0:8]}-{raw[8:12]}-{raw[12:16]}-{raw[16:20]}-{raw[20:32]}"
+        print(f"Using Notion page ID: {page_id}", flush=True)
+
+        try:
+            results = self.client.search(
+                query=DATABASE_NAME,
+                filter={"property": "object", "value": "database"},
+            )
+        except Exception as e:
+            print(f"\n❌ Notion API search failed: {e}", flush=True)
+            print("Check that your integration is shared with the target page.", flush=True)
+            raise
+
         for item in results.get("results", []):
             title_parts = item.get("title", [])
             if title_parts and title_parts[0].get("plain_text") == DATABASE_NAME:
                 self.db_id = item["id"]
                 logger.info(f"Using existing Notion database: {self.db_id}")
+                print(f"✅ Found existing database: {self.db_id}", flush=True)
                 return self.db_id
 
-        return self._create_database()
+        print("Database not found — creating it now...", flush=True)
+        return self._create_database(page_id)
 
-    def _create_database(self):
-        db = self.client.databases.create(
-            parent={"type": "page_id", "page_id": NOTION_PAGE_ID},
-            title=[{"type": "text", "text": {"content": DATABASE_NAME}}],
-            properties={
-                # Primary identifier shown in Notion as the page title
-                "Bill Number": {"title": {}},
-                "Bill Title": {"rich_text": {}},
-                "Author": {"rich_text": {}},
-                "Category": {
-                    "select": {
-                        "options": [
-                            {"name": cat, "color": CATEGORY_COLORS[cat]}
-                            for cat in CATEGORY_COLORS
-                        ]
-                    }
+    def _create_database(self, page_id):
+        try:
+            db = self.client.databases.create(
+                parent={"type": "page_id", "page_id": page_id},
+                title=[{"type": "text", "text": {"content": DATABASE_NAME}}],
+                properties={
+                    # Primary identifier shown in Notion as the page title
+                    "Bill Number": {"title": {}},
+                    "Bill Title": {"rich_text": {}},
+                    "Author": {"rich_text": {}},
+                    "Category": {
+                        "select": {
+                            "options": [
+                                {"name": cat, "color": CATEGORY_COLORS[cat]}
+                                for cat in CATEGORY_COLORS
+                            ]
+                        }
+                    },
+                    "Status": {
+                        "select": {
+                            "options": [
+                                {"name": s, "color": c}
+                                for s, c in STATUS_COLORS.items()
+                            ]
+                        }
+                    },
+                    "Summary": {"rich_text": {}},
+                    "Recent Movement": {"rich_text": {}},
+                    "Bill Text": {"url": {}},
+                    "Committee Report": {"url": {}},
+                    # Lower number = higher priority (sorted ascending in Notion)
+                    "Priority": {"number": {}},
+                    "Last Updated": {"date": {}},
+                    # Internal tracking fields
+                    "Bill ID": {"rich_text": {}},
+                    "Prev Status": {"rich_text": {}},
+                    "Prev Movement": {"rich_text": {}},
                 },
-                "Status": {
-                    "select": {
-                        "options": [
-                            {"name": s, "color": c}
-                            for s, c in STATUS_COLORS.items()
-                        ]
-                    }
-                },
-                "Summary": {"rich_text": {}},
-                "Recent Movement": {"rich_text": {}},
-                "Bill Text": {"url": {}},
-                "Committee Report": {"url": {}},
-                # Lower number = higher priority (sorted ascending in Notion)
-                "Priority": {"number": {}},
-                "Last Updated": {"date": {}},
-                # Internal tracking fields
-                "Bill ID": {"rich_text": {}},
-                "Prev Status": {"rich_text": {}},
-                "Prev Movement": {"rich_text": {}},
-            },
-        )
+            )
+        except Exception as e:
+            print(f"\n❌ Notion database creation failed: {e}", flush=True)
+            print(
+                "Most likely fix: open the Notion page, click Share, "
+                "and invite your integration (Hans Synthesis Bot) as a connection.",
+                flush=True,
+            )
+            raise
+
         self.db_id = db["id"]
+        print(f"✅ Created Notion database: {self.db_id}", flush=True)
         logger.info(f"Created Notion database: {self.db_id}")
         return self.db_id
 

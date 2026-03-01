@@ -41,4 +41,4 @@ jobs:
           NOTION_PAGE_ID: ${{ secrets.NOTION_PAGE_ID }}
           GMAIL_USER: "setup@example.com"
           GMAIL_APP_PASSWORD: "dummy"
-        run: python main.py --setup
+        run: python -u main.py --setup 2>&1
