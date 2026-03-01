@@ -35,6 +35,20 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Verify packages and secrets
+        env:
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          NOTION_PAGE_ID: ${{ secrets.NOTION_PAGE_ID }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+        run: |
+          pip list | grep -E "notion|anthropic|requests|beautifulsoup4"
+          python -c "import requests, bs4, notion_client; print('✅ Core imports OK')"
+          echo "NOTION_API_KEY set: $( [ -n "$NOTION_API_KEY" ] && echo YES || echo NO )"
+          echo "NOTION_PAGE_ID set: $( [ -n "$NOTION_PAGE_ID" ] && echo YES || echo NO )"
+          echo "GMAIL_USER set: $( [ -n "$GMAIL_USER" ] && echo YES || echo NO )"
+          echo "GMAIL_APP_PASSWORD set: $( [ -n "$GMAIL_APP_PASSWORD" ] && echo YES || echo NO )"
+
       - name: Run update
         env:
           NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}

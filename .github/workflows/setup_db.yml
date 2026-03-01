@@ -1,5 +1,5 @@
 name: Initial Notion Database Setup
- 
+
 on:
   # Run manually from the Actions tab — only needed once
   workflow_dispatch:
@@ -18,16 +18,27 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: pip
 
       - name: Install dependencies
         run: pip install -r requirements.txt
+
+      - name: Verify packages installed
+        run: |
+          pip list | grep -E "notion|anthropic|requests|beautifulsoup4"
+          python -c "import requests, bs4, notion_client; print('✅ Core imports OK')"
+
+      - name: Check secrets are present
+        env:
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          NOTION_PAGE_ID: ${{ secrets.NOTION_PAGE_ID }}
+        run: |
+          echo "NOTION_API_KEY set: $( [ -n "$NOTION_API_KEY" ] && echo YES || echo NO )"
+          echo "NOTION_PAGE_ID set: $( [ -n "$NOTION_PAGE_ID" ] && echo YES || echo NO )"
 
       - name: Create Notion database
         env:
           NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
           NOTION_PAGE_ID: ${{ secrets.NOTION_PAGE_ID }}
-          # Dummy values — not used by --setup mode
           GMAIL_USER: "setup@example.com"
           GMAIL_APP_PASSWORD: "dummy"
         run: python main.py --setup
