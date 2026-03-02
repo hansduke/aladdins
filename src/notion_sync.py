@@ -5,7 +5,7 @@ On each run it upserts bill records and returns a list of changes
 (new bills, status changes, new movement) for use in the weekly email.
 """
 
-import loggin
+import logging
 from datetime import date
 
 from notion_client import Client
@@ -19,7 +19,7 @@ from .config import (
 
 logger = logging.getLogger(__name__)
 
-# Map category name → Notion color for the select pill
+# Map category name -> Notion color for the select pill
 CATEGORY_COLORS = {
     "Crime/Guns": "red",
     "Corrections/CDCR": "orange",
@@ -88,7 +88,7 @@ class NotionSync:
                 query=DATABASE_NAME,
             )
         except Exception as e:
-            print(f"\n❌ Notion API search failed: {e}", flush=True)
+            print(f"\nNotion API search failed: {e}", flush=True)
             print("Check that your integration is shared with the target page.", flush=True)
             raise
 
@@ -99,10 +99,10 @@ class NotionSync:
             if title_parts and title_parts[0].get("plain_text") == DATABASE_NAME:
                 self.db_id = item["id"]
                 logger.info(f"Using existing Notion database: {self.db_id}")
-                print(f"✅ Found existing database: {self.db_id}", flush=True)
+                print(f"Found existing database: {self.db_id}", flush=True)
                 return self.db_id
 
-        print("Database not found — creating it now...", flush=True)
+        print("Database not found - creating it now...", flush=True)
         return self._create_database(page_id)
 
     def _create_database(self, page_id):
@@ -111,7 +111,6 @@ class NotionSync:
                 parent={"type": "page_id", "page_id": page_id},
                 title=[{"type": "text", "text": {"content": DATABASE_NAME}}],
                 properties={
-                    # Primary identifier shown in Notion as the page title
                     "Bill Number": {"title": {}},
                     "Bill Title": {"rich_text": {}},
                     "Author": {"rich_text": {}},
@@ -135,17 +134,15 @@ class NotionSync:
                     "Recent Movement": {"rich_text": {}},
                     "Bill Text": {"url": {}},
                     "Committee Report": {"url": {}},
-                    # Lower number = higher priority (sorted ascending in Notion)
                     "Priority": {"number": {}},
                     "Last Updated": {"date": {}},
-                    # Internal tracking fields
                     "Bill ID": {"rich_text": {}},
                     "Prev Status": {"rich_text": {}},
                     "Prev Movement": {"rich_text": {}},
                 },
             )
         except Exception as e:
-            print(f"\n❌ Notion database creation failed: {e}", flush=True)
+            print(f"\nNotion database creation failed: {e}", flush=True)
             print(
                 "Most likely fix: open the Notion page, click Share, "
                 "and invite your integration (Hans Synthesis Bot) as a connection.",
@@ -154,7 +151,7 @@ class NotionSync:
             raise
 
         self.db_id = db["id"]
-        print(f"✅ Created Notion database: {self.db_id}", flush=True)
+        print(f"Created Notion database: {self.db_id}", flush=True)
         logger.info(f"Created Notion database: {self.db_id}")
         return self.db_id
 
@@ -171,11 +168,11 @@ class NotionSync:
         cursor = None
 
         while True:
-                        params = {"data_source_id": self.db_id, "page_size": 100}
+            kwargs = {"page_size": 100}
             if cursor:
-                params["start_cursor"] = cursor
+                kwargs["start_cursor"] = cursor
 
-                        resp = self.client.data_sources.query(**params)
+            resp = self.client.data_sources.query(self.db_id, **kwargs)
 
             for page in resp.get("results", []):
                 props = page["properties"]
@@ -262,7 +259,7 @@ class NotionSync:
             old_movement = ex["movement"]
 
             if old_status != status_label:
-                change = f"Status changed: {old_status} → {status_label}"
+                change = f"Status changed: {old_status} -> {status_label}"
                 props["Prev Status"] = {"rich_text": _rt(old_status)}
             elif old_movement != new_movement and new_movement:
                 change = f"New movement: {new_movement}"
@@ -284,7 +281,8 @@ class NotionSync:
 
     def sync_bills(self, bills_dict):
         """
-        Sync all bills into Notion. Returns list of (bill_data, change_str).
+        Sync all bills into Notion.
+        Returns list of (bill_data, change_str).
         """
         existing = self.fetch_existing_bills()
         changes = []
