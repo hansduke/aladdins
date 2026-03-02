@@ -5,7 +5,7 @@ On each run it upserts bill records and returns a list of changes
 (new bills, status changes, new movement) for use in the weekly email.
 """
 
-import logging
+import loggin
 from datetime import date
 
 from notion_client import Client
@@ -171,11 +171,11 @@ class NotionSync:
         cursor = None
 
         while True:
-            params = {"database_id": self.db_id, "page_size": 100}
+                        params = {"data_source_id": self.db_id, "page_size": 100}
             if cursor:
                 params["start_cursor"] = cursor
 
-            resp = self.client.databases.query(**params)
+                        resp = self.client.data_sources.query(**params)
 
             for page in resp.get("results", []):
                 props = page["properties"]
