@@ -1,10 +1,15 @@
 """
-main.py — Full scrape + Notion sync + weekly email digest.
+main.py - Full scrape + Notion sync + weekly email digest.
 
 Modes:
-  python main.py            → scrape, sync, send email if changes exist
-  python main.py --no-email → scrape and sync only (no email)
-  python main.py --setup    → create/verify the Notion database, then exit
+  python main.py            -> scrape, sync, send email if changes exist
+  python main.py --no-email -> scrape and sync only (no email)
+  python main.py --setup    -> create/verify the Notion database, then exit
+
+Incremental design: bills are upserted to Notion one-by-one as they
+finish scraping.  If the job is killed at minute 43, everything scraped
+so far is already in Notion.  The next run picks up from the existing
+records (fetch_existing_bills) and only overwrites what has changed.
 """
 
 import argparse
@@ -24,30 +29,63 @@ def run(send_email=True):
     from src.notion_sync import NotionSync
     from src.email_client import send_weekly_digest
 
-    # 1. Scrape leginfo
-    logger.info("Starting leginfo scrape …")
-    scraper = LegInfoScraper()
-    bills = scraper.get_all_public_safety_bills()
-
-    if not bills:
-        logger.warning("No bills found — aborting.")
-        sys.exit(1)
-
-    # 2. Sync to Notion
-    logger.info("Syncing to Notion …")
+    # ----------------------------------------------------------------
+    # 1. Set up Notion DB and load already-synced bills
+    # ----------------------------------------------------------------
+    logger.info("Connecting to Notion ...")
     notion = NotionSync()
     notion.get_or_create_database()
-    changes = notion.sync_bills(bills)
 
-    logger.info(f"Sync complete. {len(changes)} changes this week.")
+    logger.info("Loading existing bills from Notion ...")
+    existing = notion.fetch_existing_bills()
+    logger.info(f"Found {len(existing)} bills already in Notion.")
 
+    # ----------------------------------------------------------------
+    # 2. Scrape + upsert incrementally
+    #    Each bill is written to Notion as soon as its detail pages are
+    #    fetched, so a crash never discards more than ~1 bill's work.
+    # ----------------------------------------------------------------
+    logger.info("Starting leginfo scrape ...")
+    scraper = LegInfoScraper()
+    changes = []
+
+    # get_all_public_safety_bills_incremental yields (bill_id, bill_data)
+    # one at a time as each bill finishes being scraped.
+    total = 0
+    for bid, bill in scraper.get_all_public_safety_bills_incremental():
+        total += 1
+        try:
+            change = notion.upsert_bill(bill, existing)
+            # Update existing cache so subsequent duplicates are treated as updates
+            if bid not in existing:
+                existing[bid] = {
+                    "page_id": None,   # not needed after initial create
+                    "status": bill.get("status", ""),
+                    "movement": bill.get("recent_movement", ""),
+                    "prev_status": "",
+                    "prev_movement": "",
+                }
+            if change:
+                changes.append((bill, change))
+                logger.info(f"[{total}] {bid}: {change}")
+        except Exception as exc:
+            logger.error(f"[{total}] Failed to upsert {bid}: {exc}")
+
+    if not total:
+        logger.warning("No bills found - aborting.")
+        sys.exit(1)
+
+    logger.info(f"Scrape+sync complete. {total} bills processed, {len(changes)} changes.")
+
+    # ----------------------------------------------------------------
     # 3. Send email
+    # ----------------------------------------------------------------
     if send_email:
         if changes:
-            logger.info("Sending weekly digest …")
+            logger.info("Sending weekly digest ...")
             send_weekly_digest(changes)
         else:
-            logger.info("No changes — skipping email.")
+            logger.info("No changes - skipping email.")
     else:
         logger.info("Email skipped (--no-email flag).")
 
@@ -56,8 +94,7 @@ def run(send_email=True):
 
 def setup_only():
     from src.notion_sync import NotionSync
-
-    logger.info("Setting up Notion database …")
+    logger.info("Setting up Notion database ...")
     notion = NotionSync()
     db_id = notion.get_or_create_database()
     logger.info(f"Database ready: {db_id}")
