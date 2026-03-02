@@ -5,7 +5,7 @@ On each run it upserts bill records and returns a list of changes
 (new bills, status changes, new movement) for use in the weekly email.
 """
 
-import loggin
+import logging
 from datetime import date
 
 from notion_client import Client
