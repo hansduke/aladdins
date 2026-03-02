@@ -319,3 +319,48 @@ class LegInfoScraper:
 
         logger.info(f"{len(detailed)} active public-safety bills after filtering")
         return detailed
+
+
+    def get_all_public_safety_bills_incremental(self):
+        """
+        Generator version of get_all_public_safety_bills.
+
+        Yields (bill_id, bill_data) tuples one at a time as each bill
+        finishes being fully scraped (search + detail pages).  This lets
+        the caller (main.py) upsert each bill to Notion immediately, so
+        a crash never throws away more than ~1 bill's worth of work.
+        """
+        all_bills = {}
+
+        # --- Phase 1: collect all bill IDs via keyword search ---
+        for category, keywords in CATEGORY_KEYWORDS.items():
+            logger.info(f"Searching category: {category}")
+            for keyword in keywords:
+                try:
+                    results = self.search_bills(keyword)
+                except Exception as exc:
+                    logger.error(f"Search failed for '{keyword}': {exc}")
+                    time.sleep(3)
+                    continue
+                for bill in results:
+                    bid = bill["bill_id"]
+                    if bid not in all_bills:
+                        all_bills[bid] = bill
+                        all_bills[bid]["categories"] = [category]
+                    elif category not in all_bills[bid]["categories"]:
+                        all_bills[bid]["categories"].append(category)
+
+        logger.info(f"Found {len(all_bills)} unique bills - fetching details ...")
+
+        # --- Phase 2: fetch details and yield each bill as it completes ---
+        for bid, bill in all_bills.items():
+            try:
+                details = self.get_bill_details(bid)
+                bill.update(details)
+                if self.is_bill_active(bill):
+                    yield bid, bill
+                else:
+                    logger.debug(f"Filtered inactive bill: {bid}")
+            except Exception as exc:
+                logger.error(f"Detail fetch failed for {bid}: {exc}")
+                time.sleep(2)
