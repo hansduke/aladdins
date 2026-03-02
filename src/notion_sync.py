@@ -41,6 +41,38 @@ STATUS_COLORS = {
     "Dead": "default",
 }
 
+# All properties we need in the database schema
+REQUIRED_PROPERTIES = {
+    "Bill Number": {"title": {}},
+    "Bill Title": {"rich_text": {}},
+    "Author": {"rich_text": {}},
+    "Category": {
+        "select": {
+            "options": [
+                {"name": cat, "color": CATEGORY_COLORS[cat]}
+                for cat in CATEGORY_COLORS
+            ]
+        }
+    },
+    "Status": {
+        "select": {
+            "options": [
+                {"name": s, "color": c}
+                for s, c in STATUS_COLORS.items()
+            ]
+        }
+    },
+    "Summary": {"rich_text": {}},
+    "Recent Movement": {"rich_text": {}},
+    "Bill Text": {"url": {}},
+    "Committee Report": {"url": {}},
+    "Priority": {"number": {}},
+    "Last Updated": {"date": {}},
+    "Bill ID": {"rich_text": {}},
+    "Prev Status": {"rich_text": {}},
+    "Prev Movement": {"rich_text": {}},
+}
+
 
 def _rt(text):
     """Build a Notion rich_text property value."""
@@ -101,46 +133,62 @@ class NotionSync:
                 self.db_id = item["id"]
                 logger.info(f"Using existing Notion database: {self.db_id}")
                 print(f"Found existing database: {self.db_id}", flush=True)
+                # Ensure the schema is correct (handles DBs created under old API versions)
+                self._ensure_schema()
                 return self.db_id
 
         print("Database not found - creating it now...", flush=True)
         return self._create_database(page_id)
+
+    def _ensure_schema(self):
+        """
+        Update the database to ensure all required properties exist with correct types.
+        This is needed when a database was created under a different API version
+        or if properties are missing/renamed.
+        """
+        try:
+            # Retrieve current schema
+            db = self.client.databases.retrieve(database_id=self.db_id)
+            existing_props = set(db.get("properties", {}).keys())
+            needed_props = set(REQUIRED_PROPERTIES.keys())
+            missing = needed_props - existing_props
+            if missing:
+                print(f"Database is missing properties: {missing}. Updating schema...", flush=True)
+                # Build update payload with missing properties only
+                update_props = {k: REQUIRED_PROPERTIES[k] for k in missing}
+                # Note: Can't change "title" property via update if one already exists
+                # The title property must be the one named "Bill Number"
+                # If it exists under a different name, we keep it as-is
+                if "Bill Number" in missing:
+                    # Check if there's already a title property with a different name
+                    for prop_name, prop_val in db.get("properties", {}).items():
+                        if prop_val.get("type") == "title":
+                            # Rename it to "Bill Number"
+                            print(f"Renaming title property '{prop_name}' to 'Bill Number'", flush=True)
+                            self.client.databases.update(
+                                database_id=self.db_id,
+                                properties={prop_name: {"name": "Bill Number"}},
+                            )
+                            del update_props["Bill Number"]
+                            break
+                if update_props:
+                    self.client.databases.update(
+                        database_id=self.db_id,
+                        properties=update_props,
+                    )
+                    print(f"Schema updated: added {list(update_props.keys())}", flush=True)
+            else:
+                logger.debug("Database schema is up to date.")
+        except Exception as e:
+            logger.warning(f"Schema check failed (non-fatal): {e}")
+            print(f"Warning: schema check failed: {e}", flush=True)
 
     def _create_database(self, page_id):
         try:
             db = self.client.databases.create(
                 parent={"type": "page_id", "page_id": page_id},
                 title=[{"type": "text", "text": {"content": DATABASE_NAME}}],
-                properties={
-                    "Bill Number": {"title": {}},
-                    "Bill Title": {"rich_text": {}},
-                    "Author": {"rich_text": {}},
-                    "Category": {
-                        "select": {
-                            "options": [
-                                {"name": cat, "color": CATEGORY_COLORS[cat]}
-                                for cat in CATEGORY_COLORS
-                            ]
-                        }
-                    },
-                    "Status": {
-                        "select": {
-                            "options": [
-                                {"name": s, "color": c}
-                                for s, c in STATUS_COLORS.items()
-                            ]
-                        }
-                    },
-                    "Summary": {"rich_text": {}},
-                    "Recent Movement": {"rich_text": {}},
-                    "Bill Text": {"url": {}},
-                    "Committee Report": {"url": {}},
-                    "Priority": {"number": {}},
-                    "Last Updated": {"date": {}},
-                    "Bill ID": {"rich_text": {}},
-                    "Prev Status": {"rich_text": {}},
-                    "Prev Movement": {"rich_text": {}},
-                },
+                properties=REQUIRED_PROPERTIES,
             )
         except Exception as e:
             print(f"\nNotion database creation failed: {e}", flush=True)
