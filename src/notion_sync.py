@@ -3,6 +3,9 @@ Creates and maintains the '2026 Leg' Notion database.
 
 On each run it upserts bill records and returns a list of changes
 (new bills, status changes, new movement) for use in the weekly email.
+
+Key design: bills are upserted to Notion one-by-one as they are scraped
+so that progress is saved incrementally and a crash does not lose data.
 """
 
 import logging
@@ -78,15 +81,12 @@ class NotionSync:
 
     def get_or_create_database(self):
         """Find the existing '2026 Leg' database or create it fresh."""
-        # Format page ID as UUID with dashes (Notion API requires this)
         raw = NOTION_PAGE_ID.replace("-", "")
         page_id = f"{raw[0:8]}-{raw[8:12]}-{raw[12:16]}-{raw[16:20]}-{raw[20:32]}"
         print(f"Using Notion page ID: {page_id}", flush=True)
 
         try:
-            results = self.client.search(
-                query=DATABASE_NAME,
-            )
+            results = self.client.search(query=DATABASE_NAME)
         except Exception as e:
             print(f"\nNotion API search failed: {e}", flush=True)
             print("Check that your integration is shared with the target page.", flush=True)
@@ -162,17 +162,22 @@ class NotionSync:
     def fetch_existing_bills(self):
         """
         Return dict of { bill_id: { page_id, status, movement } }
-        by paginating through the whole database.
+        by paginating through the whole database using the REST API directly.
         """
         existing = {}
         cursor = None
 
         while True:
-            kwargs = {"page_size": 100}
+            body = {"page_size": 100}
             if cursor:
-                kwargs["start_cursor"] = cursor
+                body["start_cursor"] = cursor
 
-            resp = self.client.data_sources.query(self.db_id, **kwargs)
+            # Use client.request() directly - works with any SDK version
+            resp = self.client.request(
+                path=f"databases/{self.db_id}/query",
+                method="POST",
+                body=body,
+            )
 
             for page in resp.get("results", []):
                 props = page["properties"]
@@ -240,12 +245,12 @@ class NotionSync:
         return props, status_label
 
     # ------------------------------------------------------------------
-    # Upsert
+    # Upsert one bill - called immediately after each bill is scraped
     # ------------------------------------------------------------------
 
     def upsert_bill(self, bill, existing_bills):
         """
-        Create or update a bill page.
+        Create or update a single bill page in Notion.
         Returns a change description string, or None if nothing changed.
         """
         bid = bill["bill_id"]
@@ -286,17 +291,22 @@ class NotionSync:
         """
         existing = self.fetch_existing_bills()
         changes = []
+        synced = 0
 
         for bid, bill in bills_dict.items():
             try:
                 change = self.upsert_bill(bill, existing)
+                synced += 1
                 if change:
                     changes.append((bill, change))
+                    logger.info(f"[{synced}/{len(bills_dict)}] {bid}: {change}")
+                else:
+                    logger.debug(f"[{synced}/{len(bills_dict)}] {bid}: no change")
             except Exception as exc:
                 logger.error(f"Failed to upsert {bid}: {exc}")
 
         logger.info(
-            f"Synced {len(bills_dict)} bills. "
+            f"Synced {synced}/{len(bills_dict)} bills. "
             f"{len(changes)} changes detected."
         )
         return changes
