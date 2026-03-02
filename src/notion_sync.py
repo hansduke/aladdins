@@ -5,7 +5,7 @@ On each run it upserts bill records and returns a list of changes
 (new bills, status changes, new movement) for use in the weekly email.
 """
 
-import logging
+import loggin
 from datetime import date
 
 from notion_client import Client
@@ -86,7 +86,6 @@ class NotionSync:
         try:
             results = self.client.search(
                 query=DATABASE_NAME,
-                filter={"property": "object", "value": "database"},
             )
         except Exception as e:
             print(f"\n❌ Notion API search failed: {e}", flush=True)
@@ -94,6 +93,8 @@ class NotionSync:
             raise
 
         for item in results.get("results", []):
+            if item.get("object") != "database":
+                continue
             title_parts = item.get("title", [])
             if title_parts and title_parts[0].get("plain_text") == DATABASE_NAME:
                 self.db_id = item["id"]
