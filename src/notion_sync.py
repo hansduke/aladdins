@@ -6,6 +6,13 @@ On each run it upserts bill records and returns a list of changes
 
 Key design: bills are upserted to Notion one-by-one as they are scraped
 so that progress is saved incrementally and a crash does not lose data.
+
+Important: we use client.request() directly for database create/update/query
+because the notion-client SDK v2.7.0 strips 'properties' from the body in
+databases.create() and databases.update() (those methods target the 2025-09-03 API
+which separates database schema from data sources). By calling client.request()
+directly with notion_version pinned to 2022-06-28 we get the classic REST API
+that supports properties in all these calls.
 """
 
 import logging
@@ -104,7 +111,8 @@ def _normalize_status(raw):
 class NotionSync:
     def __init__(self):
         # Pin to Notion API version 2022-06-28 so that the
-        # /v1/databases/{id}/query endpoint is available and not deprecated.
+        # /v1/databases/{id}/query endpoint is available and not deprecated,
+        # and so that 'properties' is respected in database create/update calls.
         self.client = Client(auth=NOTION_API_KEY, notion_version="2022-06-28")
         self.db_id = None
 
@@ -133,7 +141,8 @@ class NotionSync:
                 self.db_id = item["id"]
                 logger.info(f"Using existing Notion database: {self.db_id}")
                 print(f"Found existing database: {self.db_id}", flush=True)
-                # Ensure the schema is correct (handles DBs created under old API versions)
+                # Ensure schema is correct (handles DBs created under old API versions
+                # where 'properties' were silently dropped from databases.create())
                 self._ensure_schema()
                 return self.db_id
 
@@ -142,53 +151,75 @@ class NotionSync:
 
     def _ensure_schema(self):
         """
-        Update the database to ensure all required properties exist with correct types.
-        This is needed when a database was created under a different API version
-        or if properties are missing/renamed.
+        Verify all required properties exist and add any that are missing.
+        Uses client.request() directly because the SDK's databases.update()
+        strips 'properties' from the request body in v2.7.0.
         """
         try:
-            # Retrieve current schema
-            db = self.client.databases.retrieve(database_id=self.db_id)
+            # Retrieve current schema via direct request
+            db = self.client.request(
+                path=f"databases/{self.db_id}",
+                method="GET",
+            )
             existing_props = set(db.get("properties", {}).keys())
             needed_props = set(REQUIRED_PROPERTIES.keys())
             missing = needed_props - existing_props
-            if missing:
-                print(f"Database is missing properties: {missing}. Updating schema...", flush=True)
-                # Build update payload with missing properties only
-                update_props = {k: REQUIRED_PROPERTIES[k] for k in missing}
-                # Note: Can't change "title" property via update if one already exists
-                # The title property must be the one named "Bill Number"
-                # If it exists under a different name, we keep it as-is
-                if "Bill Number" in missing:
-                    # Check if there's already a title property with a different name
-                    for prop_name, prop_val in db.get("properties", {}).items():
-                        if prop_val.get("type") == "title":
-                            # Rename it to "Bill Number"
-                            print(f"Renaming title property '{prop_name}' to 'Bill Number'", flush=True)
-                            self.client.databases.update(
-                                database_id=self.db_id,
-                                properties={prop_name: {"name": "Bill Number"}},
-                            )
-                            del update_props["Bill Number"]
-                            break
-                if update_props:
-                    self.client.databases.update(
-                        database_id=self.db_id,
-                        properties=update_props,
-                    )
-                    print(f"Schema updated: added {list(update_props.keys())}", flush=True)
-            else:
+
+            if not missing:
                 logger.debug("Database schema is up to date.")
+                return
+
+            print(f"Database missing properties: {sorted(missing)}. Patching schema...", flush=True)
+
+            # Handle renaming the default title property if needed
+            # (Notion always has exactly one title property)
+            update_props = dict(REQUIRED_PROPERTIES)  # copy
+
+            if "Bill Number" in missing:
+                # Find any existing title property and rename it
+                for prop_name, prop_val in db.get("properties", {}).items():
+                    if prop_val.get("type") == "title":
+                        # Rename it to "Bill Number" via direct PATCH
+                        self.client.request(
+                            path=f"databases/{self.db_id}",
+                            method="PATCH",
+                            body={"properties": {prop_name: {"name": "Bill Number"}}},
+                        )
+                        print(f"Renamed title prop '{prop_name}' -> 'Bill Number'", flush=True)
+                        del update_props["Bill Number"]
+                        missing.discard("Bill Number")
+                        break
+
+            if missing:
+                # Add all remaining missing properties
+                props_to_add = {k: update_props[k] for k in missing if k != "Bill Number"}
+                if props_to_add:
+                    self.client.request(
+                        path=f"databases/{self.db_id}",
+                        method="PATCH",
+                        body={"properties": props_to_add},
+                    )
+                    print(f"Added {len(props_to_add)} missing properties to schema.", flush=True)
+
         except Exception as e:
-            logger.warning(f"Schema check failed (non-fatal): {e}")
-            print(f"Warning: schema check failed: {e}", flush=True)
+            logger.warning(f"Schema check/patch failed (non-fatal): {e}")
+            print(f"Warning: schema patch failed: {e}", flush=True)
 
     def _create_database(self, page_id):
+        """
+        Create a new database with all required properties.
+        Uses client.request() directly because the SDK's databases.create()
+        strips 'properties' from the request body in v2.7.0.
+        """
         try:
-            db = self.client.databases.create(
-                parent={"type": "page_id", "page_id": page_id},
-                title=[{"type": "text", "text": {"content": DATABASE_NAME}}],
-                properties=REQUIRED_PROPERTIES,
+            db = self.client.request(
+                path="databases",
+                method="POST",
+                body={
+                    "parent": {"type": "page_id", "page_id": page_id},
+                    "title": [{"type": "text", "text": {"content": DATABASE_NAME}}],
+                    "properties": REQUIRED_PROPERTIES,
+                },
             )
         except Exception as e:
             print(f"\nNotion database creation failed: {e}", flush=True)
@@ -211,8 +242,8 @@ class NotionSync:
     def fetch_existing_bills(self):
         """
         Return dict of { bill_id: { page_id, status, movement } } by
-        paginating through the whole database using the REST API directly.
-        Uses the 2022-06-28 API endpoint POST /v1/databases/{id}/query.
+        paginating through the whole database.
+        Uses client.request() directly for the 2022-06-28 query endpoint.
         """
         existing = {}
         cursor = None
