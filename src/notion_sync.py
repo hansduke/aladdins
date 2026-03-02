@@ -10,7 +10,6 @@ so that progress is saved incrementally and a crash does not lose data.
 
 import logging
 from datetime import date
-
 from notion_client import Client
 
 from .config import (
@@ -72,7 +71,9 @@ def _normalize_status(raw):
 
 class NotionSync:
     def __init__(self):
-        self.client = Client(auth=NOTION_API_KEY)
+        # Pin to Notion API version 2022-06-28 so that the
+        # /v1/databases/{id}/query endpoint is available and not deprecated.
+        self.client = Client(auth=NOTION_API_KEY, notion_version="2022-06-28")
         self.db_id = None
 
     # ------------------------------------------------------------------
@@ -161,18 +162,17 @@ class NotionSync:
 
     def fetch_existing_bills(self):
         """
-        Return dict of { bill_id: { page_id, status, movement } }
-        by paginating through the whole database using the REST API directly.
+        Return dict of { bill_id: { page_id, status, movement } } by
+        paginating through the whole database using the REST API directly.
+        Uses the 2022-06-28 API endpoint POST /v1/databases/{id}/query.
         """
         existing = {}
         cursor = None
-
         while True:
             body = {"page_size": 100}
             if cursor:
                 body["start_cursor"] = cursor
 
-            # Use client.request() directly - works with any SDK version
             resp = self.client.request(
                 path=f"databases/{self.db_id}/query",
                 method="POST",
@@ -292,7 +292,6 @@ class NotionSync:
         existing = self.fetch_existing_bills()
         changes = []
         synced = 0
-
         for bid, bill in bills_dict.items():
             try:
                 change = self.upsert_bill(bill, existing)
