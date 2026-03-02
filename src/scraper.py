@@ -63,8 +63,9 @@ class LegInfoScraper:
                 time.sleep(wait)
 
     def _extract_form_data(self, soup):
-        """Return (form_data_dict, action_url) from the first form on the page."""
-        form = soup.find("form")
+        """Return (form_data_dict, action_url) from the bill search form."""
+        # Target the main search form specifically (not the header quick-search form)
+        form = soup.find("form", {"id": "billSearchForm"}) or soup.find("form")
         if not form:
             return {}, SEARCH_URL
         data = {}
@@ -88,29 +89,17 @@ class LegInfoScraper:
 
     def search_bills(self, keyword, session_year=SESSION_YEAR):
         """Return list of basic bill dicts matching *keyword*."""
-        resp = self._get(SEARCH_URL)
-        soup = BeautifulSoup(resp.text, "lxml")
-        form_data, action = self._extract_form_data(soup)
-
-        # Inject our values into whatever fields the form exposes
-        for key in list(form_data.keys()):
-            kl = key.lower()
-            if "keyword" in kl:
-                form_data[key] = keyword
-            elif "session" in kl:
-                form_data[key] = session_year
-            elif "house" in kl:
-                form_data[key] = "Both"
-
-        # Click the search/submit button
-        submit = soup.find("input", {"type": "submit"}) or soup.find(
-            "button", {"type": "submit"}
-        )
-        if submit and submit.get("name"):
-            form_data[submit["name"]] = submit.get("value", "Search")
-
+        # leginfo uses JS to convert form submit into a GET with query params.
+        # We replicate that directly for reliability.
+        params = {
+            "session_year": session_year,
+            "keyword": keyword,
+            "house": "Both",
+            "author": "All",
+            "lawCode": "All",
+        }
         time.sleep(1)  # be polite
-        resp = self._post(action, form_data)
+        resp = self._get(SEARCH_URL, params=params)
         bills = self._parse_search_results(resp.text)
         logger.info(f"  keyword '{keyword}' → {len(bills)} bills")
         return bills
